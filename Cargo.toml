@@ -1,0 +1,21 @@
+[package]
+name = "rust_utilities"
+version = "0.1.0"
+authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
+license = "MIT"
+description = "Small utililies I've written while learning Rust"
+
+homepage = "https://github.com/rosterloh/rust_utilities"
+repository = "https://github.com/rosterloh/rust_utilities"
+readme = "README.md"
+keywords = ["cross-platform", "cli", "utility"]
+categories = ["command-line-utilities"]
+rust-version = "1.80.0"
+edition = "2021"
+
+[[bin]]
+name = "colcat"
+path = "src/colcat.rs"
+
+[dependencies]
+anyhow = "1.0.86"
