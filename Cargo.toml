@@ -16,6 +16,3 @@ edition = "2021"
 [[bin]]
 name = "colcat"
 path = "src/colcat.rs"
-
-[dependencies]
-anyhow = "1.0.86"
