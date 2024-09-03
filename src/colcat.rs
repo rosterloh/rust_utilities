@@ -3,8 +3,41 @@ use std::{
     env, io::BufRead, io::BufReader, io::Result, io::Write, os::unix::net::UnixStream, path::Path,
     time::Duration,
 };
+// use std::str::FromStr;
 
 static DEFAULT_SOCKET_PATH: &'static str = "/var/run/collectd-unixsock";
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct Metric {
+    host: String,
+    plugin: String,
+    plugin_instances: Vec<String>,
+    values: Vec<f64>,
+}
+
+// impl FromStr for Metric {
+//     type Err = std::num::ParseIntError;
+
+//     fn from_str(input: &str) -> Result<Self, Self::Err> {
+//         let metric_parts: Vec<&str> = input.split("/").collect();
+//         if metric_parts.len() != 3 {
+//             return Err("Could not extract arguments");
+//         }
+
+//         let host = metric_parts[0].to_string();
+//         let plugin = metric_parts[1].to_string();
+//         let plugin_instance = vec![metric_parts[2].to_string()];
+//         let values = vec![];
+
+//         Ok(Metric {
+//             host,
+//             plugin,
+//             plugin_instance,
+//             values,
+//         })
+//     }
+// }
 
 fn read_from_socket(reader: &mut BufReader<UnixStream>) -> Vec<String> {
     let mut results: Vec<String> = vec![];
@@ -35,7 +68,7 @@ fn read_from_socket(reader: &mut BufReader<UnixStream>) -> Vec<String> {
         }
     }
 
-    // TODO: check len results == num_values
+    // todo!(check len results == num_values)
     results
 }
 
@@ -79,12 +112,37 @@ fn main() -> Result<()> {
     let results = read_from_socket(&mut reader);
     // println!("{:?}", results);
     if results.len() > 0 {
+        let mut metrics: Vec<Metric> = vec![];
         for metric in results {
             let get_val = format!("GETVAL {metric}\n");
             stream.write_all(get_val.as_bytes())?;
 
             let metric_data = read_from_socket(&mut reader);
-            println!("{metric}: {:?}", metric_data);
+            // println!("{metric}: {:?}", metric_data);
+
+            let metric_parts: Vec<&str> = metric.split("/").collect();
+            if metric_parts.len() != 3 {
+                continue;
+            }
+
+            let host = metric_parts[0].to_string();
+            let plugin = metric_parts[1].to_string();
+            let plugin_instance = metric_parts[2].to_string();
+            let value: f64 = metric_data[0].split("=").last().unwrap().parse().unwrap();
+
+            if let Some(m) = metrics.iter_mut().find(|x| x.plugin == plugin) {
+                m.plugin_instances.push(plugin_instance);
+                m.values.push(value);
+            } else {
+                metrics.push(Metric {
+                    host,
+                    plugin,
+                    plugin_instances: vec![plugin_instance],
+                    values: vec![value],
+                })
+            }
+
+            println!("{:#?}", metrics);
         }
     } else {
         println!("No metrics found");
