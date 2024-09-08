@@ -72,25 +72,41 @@ fn read_from_socket(reader: &mut BufReader<UnixStream>) -> Vec<String> {
     results
 }
 
+struct AppArgs {
+    socket_path: String,
+}
+
+impl AppArgs {
+    fn build(args: &[String]) -> std::result::Result<AppArgs, &'static str> {
+        let socket_path;
+
+        if args.len() < 2 {
+            // return Err("Not enough arguments");
+            socket_path = DEFAULT_SOCKET_PATH.to_string();
+        } else {
+            socket_path = args[1].clone();
+        }
+
+        Ok(AppArgs { socket_path })
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let socket_path: String;
+    let app_args = AppArgs::build(&args).unwrap_or_else(|err| {
+        println!("Problem parsing arguments: {err}");
+        std::process::exit(1);
+    });
 
-    if args.len() < 2 {
-        socket_path = DEFAULT_SOCKET_PATH.to_string();
-    } else {
-        socket_path = args[1].clone();
-    }
-
-    let socket = Path::new(&socket_path);
+    let socket = Path::new(&app_args.socket_path);
 
     if !socket.exists() {
-        panic!("No file found at {}", socket_path);
+        panic!("No file found at {}", app_args.socket_path);
     }
 
     println!("Connecting to socket");
     let mut stream = match UnixStream::connect(&socket) {
-        Err(_) => panic!("Could not connect to socket at {}", socket_path),
+        Err(_) => panic!("Could not connect to socket at {}", app_args.socket_path),
         Ok(stream) => stream,
     };
 

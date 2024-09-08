@@ -1,9 +1,9 @@
 [package]
-name = "rust_utilities"
+name = "colcat"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
 license = "MIT"
-description = "Small utililies I've written while learning Rust"
+description = "Small application to list and print values from collectd sockets"
 
 homepage = "https://github.com/rosterloh/rust_utilities"
 repository = "https://github.com/rosterloh/rust_utilities"
@@ -13,16 +13,6 @@ categories = ["command-line-utilities"]
 rust-version = "1.81.0"
 edition = "2021"
 
-[workspace]
-members = [
-    "colcat",
-]
-resolver = "2"
-
-[profile.release]
-# We do not handle FFI unwinding so we need to keep panic abort for now.
-panic="abort"
-opt-level = "z"
-
-[profile.dev]
-panic="abort"
+[[bin]]
+name = "colcat"
+path = "src/main.rs"
