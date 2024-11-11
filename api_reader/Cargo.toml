@@ -1,9 +1,10 @@
 [package]
-name = "rust_utilities"
+name = "api_reader"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
 license = "MIT"
-description = "Small utililies I've written while learning Rust"
+description = "Application to read json data from an api"
+
 homepage = "https://github.com/rosterloh/rust_utilities"
 repository = "https://github.com/rosterloh/rust_utilities"
 readme = "README.md"
@@ -12,23 +13,9 @@ categories = ["command-line-utilities"]
 rust-version = "1.82.0"
 edition = "2021"
 
-[workspace]
-members = [
-    "api_reader",
-    "avahi-scan",
-    "colcat",
-]
-resolver = "2"
-
-[profile.release]
-opt-level = 3
-debug = false
-panic="unwind"
-lto = true
-codegen-units = 1
-strip = true
-
-[profile.dev]
-opt-level = 0
-debug = true
-panic="abort"
+[dependencies]
+reqwest = {version = "0.12.9", features = ["json"]}
+tokio = {version = "1.41.1", features = ["full"]}
+serde_json = "1.0.132"
+csv = "1.3.1"
+dotenv = "0.15.0"

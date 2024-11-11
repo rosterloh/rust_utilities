@@ -1,6 +1,6 @@
 use core::panic;
 use std::{
-    env, io::BufRead, io::BufReader, io::Result, io::Write, os::unix::net::UnixStream, path::Path,
+    env, io::BufRead, io::BufReader, io::Write, os::unix::net::UnixStream, path::PathBuf,
     time::Duration,
 };
 // use std::str::FromStr;
@@ -74,38 +74,41 @@ fn read_from_socket(reader: &mut BufReader<UnixStream>) -> Vec<String> {
 
 struct AppArgs {
     socket_path: String,
+    socket: PathBuf,
 }
 
 impl AppArgs {
-    fn build(args: &[String]) -> std::result::Result<AppArgs, &'static str> {
+    fn build(args: &[String]) -> Result<AppArgs, &'static str> {
         let socket_path;
 
         if args.len() < 2 {
-            // return Err("Not enough arguments");
             socket_path = DEFAULT_SOCKET_PATH.to_string();
         } else {
             socket_path = args[1].clone();
         }
 
-        Ok(AppArgs { socket_path })
+        let socket = PathBuf::from(&socket_path);
+
+        if !socket.exists() {
+            return Err("No file found at path");
+        }
+
+        Ok(AppArgs {
+            socket_path,
+            socket,
+        })
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
     let app_args = AppArgs::build(&args).unwrap_or_else(|err| {
         println!("Problem parsing arguments: {err}");
         std::process::exit(1);
     });
 
-    let socket = Path::new(&app_args.socket_path);
-
-    if !socket.exists() {
-        panic!("No file found at {}", app_args.socket_path);
-    }
-
     println!("Connecting to socket");
-    let mut stream = match UnixStream::connect(&socket) {
+    let mut stream = match UnixStream::connect(app_args.socket) {
         Err(_) => panic!("Could not connect to socket at {}", app_args.socket_path),
         Ok(stream) => stream,
     };
