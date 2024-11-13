@@ -1,7 +1,5 @@
-#[macro_use]
-extern crate log;
-
 use clap::Parser;
+use log::{debug, error, info};
 
 use std::{any::Any, sync::Arc, time::Duration};
 use zeroconf::prelude::*;
@@ -25,7 +23,7 @@ struct Args {
 }
 
 fn main() -> zeroconf::Result<()> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let Args {
         name,
@@ -47,6 +45,8 @@ fn main() -> zeroconf::Result<()> {
 
     let event_loop = browser.browse_services()?;
 
+    info!("Scanning for services...");
+
     loop {
         // calling `poll()` will keep this browser alive
         event_loop.poll(Duration::from_secs(0))?;
@@ -57,10 +57,13 @@ fn on_service_discovered(
     result: zeroconf::Result<ServiceDiscovery>,
     _context: Option<Arc<dyn Any>>,
 ) {
-    info!(
-        "Service discovered: {:?}",
-        result.expect("service discovery failed")
-    );
-
-    // ...
+    if let Ok(sd) = result {
+        if sd.name().starts_with("G") {
+            info!("{}", format!("{} {}", sd.name(), sd.address()));
+        } else {
+            debug!("{:?}", sd);
+        }
+    } else {
+        error!("Service discovery failed");
+    }
 }
