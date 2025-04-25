@@ -2,23 +2,22 @@
 name = "avahi-scan"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
-license = "MIT"
 description = "Small application to scan for Avahi services on the local network"
-
-homepage = "https://github.com/rosterloh/rust_utilities"
-repository = "https://github.com/rosterloh/rust_utilities"
-readme = "README.md"
 keywords = ["cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.82.0"
-edition = "2021"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "avahi-scan"
 path = "src/main.rs"
 
 [dependencies]
-clap = {version = "4.5.20", features = ["derive"]}
-env_logger = "0.11.5"
-log = "0.4.22"
-zeroconf = "0.15.0"
+clap = {version = "4.5", features = ["derive"]}
+env_logger = "0.11"
+log = "0.4"
+zeroconf = "0.15"

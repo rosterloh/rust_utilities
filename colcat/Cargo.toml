@@ -2,16 +2,15 @@
 name = "colcat"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
-license = "MIT"
 description = "Small application to list and print values from collectd sockets"
-
-homepage = "https://github.com/rosterloh/rust_utilities"
-repository = "https://github.com/rosterloh/rust_utilities"
-readme = "README.md"
 keywords = ["cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.81.0"
-edition = "2021"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "colcat"

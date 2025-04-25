@@ -1,4 +1,12 @@
-[package]
+[workspace]
+members = [
+    "api_reader",
+    "avahi-scan",
+    "colcat",
+]
+resolver = "2"
+
+[workspace.package]
 name = "rust_utilities"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
@@ -9,16 +17,8 @@ repository = "https://github.com/rosterloh/rust_utilities"
 readme = "README.md"
 keywords = ["cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.82.0"
-edition = "2021"
-
-[workspace]
-members = [
-    "api_reader",
-    "avahi-scan",
-    "colcat",
-]
-resolver = "2"
+rust-version = "1.86.0"
+edition = "2024"
 
 [profile.release]
 opt-level = 3
