@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if videos.is_empty() {
                 println!("No videos found");
             } else {
-                write_to_csv(videos);
+                let _ = write_to_csv(videos);
                 println!("Videos written to CSV");
             }
         }

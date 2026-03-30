@@ -4,7 +4,7 @@ members = [
     "avahi-scan",
     "colcat",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 name = "rust_utilities"
@@ -17,7 +17,7 @@ repository = "https://github.com/rosterloh/rust_utilities"
 readme = "README.md"
 keywords = ["cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.86.0"
+rust-version = "1.94.1"
 edition = "2024"
 
 [profile.release]

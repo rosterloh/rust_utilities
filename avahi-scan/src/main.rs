@@ -3,7 +3,7 @@ use log::{debug, error, info};
 
 use std::{any::Any, sync::Arc, time::Duration};
 use zeroconf::prelude::*;
-use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
+use zeroconf::{BrowserEvent, MdnsBrowser, ServiceType};
 
 /// Example of a simple mDNS browser
 #[derive(Parser, Debug)]
@@ -41,7 +41,7 @@ fn main() -> zeroconf::Result<()> {
 
     let mut browser = MdnsBrowser::new(service_type);
 
-    browser.set_service_discovered_callback(Box::new(on_service_discovered));
+    browser.set_service_callback(Box::new(on_service_discovered));
 
     let event_loop = browser.browse_services()?;
 
@@ -54,14 +54,22 @@ fn main() -> zeroconf::Result<()> {
 }
 
 fn on_service_discovered(
-    result: zeroconf::Result<ServiceDiscovery>,
-    _context: Option<Arc<dyn Any>>,
+    result: zeroconf::Result<BrowserEvent>,
+    _context: Option<Arc<dyn Any + Send + Sync>>,
 ) {
     if let Ok(sd) = result {
-        if sd.name().starts_with("G") {
-            info!("{}", format!("{} {}", sd.name(), sd.address()));
-        } else {
-            debug!("{:?}", sd);
+        match sd {
+            BrowserEvent::Add(service) => {
+                info!("Service added: {} at {}", service.name(), service.address());
+                if service.name().starts_with("G") {
+                    info!("{}", format!("{} {}", service.name(), service.address()));
+                } else {
+                    debug!("{:?}", service);
+                }
+            }
+            BrowserEvent::Remove(service) => {
+                debug!("Service removed: {:?}", service);
+            }
         }
     } else {
         error!("Service discovery failed");
