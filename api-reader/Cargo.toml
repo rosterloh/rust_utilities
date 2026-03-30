@@ -1,5 +1,5 @@
 [package]
-name = "api_reader"
+name = "api-reader"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
 description = "Application to read json data from an api"

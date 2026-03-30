@@ -1,14 +1,14 @@
 [workspace]
 members = [
     "affine-cli",
-    "api_reader",
+    "api-reader",
     "avahi-scan",
     "colcat",
 ]
 resolver = "3"
 
 [workspace.package]
-name = "rust_utilities"
+# name = "rust_utilities"
 version = "0.1.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
 license = "MIT"
