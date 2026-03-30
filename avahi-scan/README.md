@@ -4,5 +4,5 @@
 
 ```bash
 sudo apt install libavahi-client-dev
-cargo build -p avahi-scan
+cargo build --package avahi-scan
 ```

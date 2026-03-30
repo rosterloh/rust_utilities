@@ -1,0 +1,24 @@
+[package]
+name = "affine-cli"
+version = "0.1.0"
+authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
+description = "CLI for the AFFiNE GraphQL API and workspace blob endpoints"
+keywords = ["affine", "graphql", "cli", "utility"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+dirs = "6.0"
+mime_guess = "2.0"
+reqwest = { version = "0.13", features = ["json", "multipart"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
+

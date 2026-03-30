@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "affine-cli",
     "api_reader",
     "avahi-scan",
     "colcat",
