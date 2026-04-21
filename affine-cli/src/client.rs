@@ -27,6 +27,21 @@ pub struct BlobDownload {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct BlobHead {
+    pub status: StatusCode,
+    pub content_length: Option<u64>,
+    pub content_type: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct PresignedPutOutcome {
+    pub status: StatusCode,
+    pub etag: Option<String>,
+}
+
 pub struct AffineClient {
     http: Client,
     base_url: String,
@@ -53,6 +68,10 @@ impl AffineClient {
             client_version: client_version.into(),
             auth,
         })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub async fn sign_in(
@@ -248,6 +267,160 @@ impl AffineClient {
         })
     }
 
+    pub async fn head_blob(&self, workspace_id: &str, key: &str) -> Result<BlobHead> {
+        let response = self
+            .apply_auth(self.base_request(
+                Method::HEAD,
+                &self.join_path(&format!("/api/workspaces/{workspace_id}/blobs/{key}")),
+            )?)
+            .send()
+            .await
+            .context("failed to HEAD blob")?;
+
+        let status = response.status();
+        if !status.is_success() && status != StatusCode::NOT_FOUND {
+            bail!("HTTP {} on HEAD blob {}", status.as_u16(), key);
+        }
+
+        let headers = response.headers();
+        let content_length = headers
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        let content_type = headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let etag = headers
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let last_modified = headers
+            .get(reqwest::header::LAST_MODIFIED)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
+        Ok(BlobHead {
+            status,
+            content_length,
+            content_type,
+            etag,
+            last_modified,
+        })
+    }
+
+    /// Raw REST call against the AFFiNE server. JSON body optional, returns parsed JSON
+    /// when the response advertises JSON — otherwise an empty object.
+    pub async fn rest_json(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let mut request = self.apply_auth(self.base_request(method, &self.join_path(path))?);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("failed to call {path}"))?;
+
+        let status = response.status();
+        let parsed = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+
+        if !status.is_success() {
+            return Err(http_json_error(status, &parsed));
+        }
+
+        Ok(parsed)
+    }
+
+    /// PUT arbitrary bytes to an externally-provided (presigned) URL, attaching any
+    /// extra headers that the server asked the client to include.
+    pub async fn put_presigned(
+        &self,
+        url: &str,
+        bytes: Vec<u8>,
+        headers: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<PresignedPutOutcome> {
+        let mut builder = self
+            .http
+            .request(Method::PUT, url)
+            .body(bytes);
+
+        if let Some(headers) = headers {
+            for (name, value) in headers {
+                if let Some(s) = value.as_str() {
+                    builder = builder.header(name, s);
+                }
+            }
+        }
+
+        let response = builder
+            .send()
+            .await
+            .context("failed to PUT to presigned URL")?;
+
+        let status = response.status();
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "HTTP {} from presigned PUT: {}",
+                status.as_u16(),
+                body.chars().take(400).collect::<String>()
+            );
+        }
+
+        Ok(PresignedPutOutcome { status, etag })
+    }
+
+    /// Invoke magic-link OTP exchange. The body should mirror the JSON expected by
+    /// `/api/auth/magic-link` (typically `{ email, token, callbackUrl? }`). We also
+    /// capture any Set-Cookie headers so the session can be persisted.
+    pub async fn magic_link(
+        &self,
+        email: &str,
+        token: &str,
+        callback_url: Option<&str>,
+    ) -> Result<SignInResponse> {
+        let mut payload = serde_json::Map::new();
+        payload.insert("email".to_owned(), Value::String(email.to_owned()));
+        payload.insert("token".to_owned(), Value::String(token.to_owned()));
+        if let Some(callback_url) = callback_url {
+            payload.insert(
+                "callbackUrl".to_owned(),
+                Value::String(callback_url.to_owned()),
+            );
+        }
+
+        let response = self
+            .apply_auth(self.base_request(Method::POST, &self.join_path("/api/auth/magic-link"))?)
+            .json(&Value::Object(payload))
+            .send()
+            .await
+            .context("failed to send magic-link request")?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+
+        if !status.is_success() {
+            return Err(http_json_error(status, &body));
+        }
+
+        let mut cookies = BTreeMap::new();
+        merge_set_cookie_headers(&mut cookies, &headers)?;
+
+        Ok(SignInResponse { body, cookies })
+    }
+
     fn base_request(&self, method: Method, url: &str) -> Result<reqwest::RequestBuilder> {
         let version = HeaderValue::from_str(&self.client_version).with_context(|| {
             format!(
@@ -255,13 +428,11 @@ impl AffineClient {
                 self.client_version
             )
         })?;
-        let legacy_version = version.clone();
 
         Ok(self
             .http
             .request(method, url)
-            .header("x-affine-client-version", version)
-            .header("x-affine-version", legacy_version))
+            .header("x-affine-client-version", version))
     }
 
     fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -276,6 +447,28 @@ impl AffineClient {
                 }
             }
         }
+    }
+
+    /// Build a `(name, value)` list of auth headers for use with non-reqwest clients
+    /// (for example the Socket.IO client in [`crate::sync`]).
+    pub fn auth_headers(&self) -> Vec<(String, String)> {
+        match &self.auth {
+            AuthState::None => Vec::new(),
+            AuthState::Bearer(token) => {
+                vec![("Authorization".to_owned(), format!("Bearer {token}"))]
+            }
+            AuthState::Cookies(cookies) => {
+                if cookies.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![("Cookie".to_owned(), cookie_header_value(cookies))]
+                }
+            }
+        }
+    }
+
+    pub fn client_version(&self) -> &str {
+        &self.client_version
     }
 
     fn join_path(&self, path: &str) -> String {
