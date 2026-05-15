@@ -3,6 +3,7 @@ mod config;
 mod queries;
 mod sync;
 mod tags;
+mod yjs_engine;
 
 use std::path::{Path, PathBuf};
 
