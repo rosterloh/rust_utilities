@@ -211,6 +211,12 @@ struct DocListArgs {
     /// (the raw list query returns nulls until the indexer runs).
     #[arg(long)]
     resolve: bool,
+    /// Output as a compact table instead of raw JSON.
+    #[arg(long)]
+    table: bool,
+    /// Auto-paginate through all pages (outputs all results).
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args, Debug)]
@@ -764,22 +770,34 @@ async fn handle_workspace(command: WorkspaceCommand, client: &AffineClient) -> R
 async fn handle_doc(command: DocCommand, client: &AffineClient) -> Result<()> {
     match command {
         DocCommand::List(args) => {
-            let data = client
-                .graphql(
-                    queries::LIST_DOCS_QUERY,
-                    Some("listDocs"),
-                    json!({
-                        "workspaceId": args.workspace_id,
-                        "pagination": {
-                            "first": args.first,
-                            "after": args.after,
-                            "offset": args.offset,
-                        }
-                    }),
-                )
-                .await?;
+            let data = if args.all {
+                collect_all_docs_paginated(client, &args.workspace_id, None, args.after.as_deref(), args.resolve).await?
+            } else {
+                client
+                    .graphql(
+                        queries::LIST_DOCS_QUERY,
+                        Some("listDocs"),
+                        json!({
+                            "workspaceId": args.workspace_id,
+                            "pagination": {
+                                "first": args.first,
+                                "after": args.after,
+                                "offset": args.offset,
+                            }
+                        }),
+                    )
+                    .await?
+            };
 
-            if args.resolve {
+            if args.table {
+                let enriched = if args.resolve || args.all {
+                    resolve_doc_list_titles(client, &args.workspace_id, &data).await?
+                } else {
+                    data
+                };
+                print_doc_table(&enriched)
+            } else if args.resolve || args.all {
+                // Re-resolve to make sure title/summary are populated
                 let enriched = resolve_doc_list_titles(client, &args.workspace_id, &data).await?;
                 print_json_pretty(&enriched)
             } else {
@@ -787,21 +805,32 @@ async fn handle_doc(command: DocCommand, client: &AffineClient) -> Result<()> {
             }
         }
         DocCommand::Recent(args) => {
-            let data = client
-                .graphql(
-                    queries::LIST_RECENT_DOCS_QUERY,
-                    Some("listRecentDocs"),
-                    json!({
-                        "workspaceId": args.workspace_id,
-                        "pagination": {
-                            "first": args.first,
-                            "after": args.after,
-                            "offset": args.offset,
-                        }
-                    }),
-                )
-                .await?;
-            print_json_pretty(&data)
+            let data = if args.all {
+                collect_all_docs_paginated(client, &args.workspace_id, Some(true), args.after.as_deref(), false).await?
+            } else {
+                client
+                    .graphql(
+                        queries::LIST_RECENT_DOCS_QUERY,
+                        Some("listRecentDocs"),
+                        json!({
+                            "workspaceId": args.workspace_id,
+                            "pagination": {
+                                "first": args.first,
+                                "after": args.after,
+                                "offset": args.offset,
+                            }
+                        }),
+                    )
+                    .await?
+            };
+
+            if args.table {
+                // Recent docs already have titles populated, but resolve for summaries
+                let enriched = resolve_doc_list_titles(client, &args.workspace_id, &data).await?;
+                print_doc_table(&enriched)
+            } else {
+                print_json_pretty(&data)
+            }
         }
         DocCommand::PublicList { workspace_id } => {
             let data = client
@@ -988,19 +1017,130 @@ async fn handle_doc_role(command: DocRoleCommand, client: &AffineClient) -> Resu
     }
 }
 
+/// Helper: navigate the mutable workspace doc container (docs or recentlyUpdatedDocs).
+fn find_doc_edges_mut(value: &mut Value) -> Option<&mut Vec<Value>> {
+    let paths: &[&[&str]] = &[
+        &["data", "workspace", "docs"],
+        &["data", "workspace", "recentlyUpdatedDocs"],
+        &["workspace", "docs"],
+        &["workspace", "recentlyUpdatedDocs"],
+    ];
+
+    for path in paths {
+        let ptr: *mut Value = value;
+        let mut current = ptr;
+        let mut ok = true;
+        for key in *path {
+            unsafe {
+                match (*current).get_mut(key) {
+                    Some(child) => current = child as *mut Value,
+                    None => { ok = false; break; }
+                }
+            }
+        }
+        if !ok { continue; }
+        unsafe {
+            if let Some(edges) = (*current).get_mut("edges").and_then(|e| e.as_array_mut()) {
+                return Some(edges);
+            }
+        }
+    }
+    None
+}
+
+/// Fetch all docs via cursor-based pagination. When `is_recent` is Some(true),
+/// uses `recentlyUpdatedDocs` instead of `docs`.
+async fn collect_all_docs_paginated(
+    client: &AffineClient,
+    workspace_id: &str,
+    is_recent: Option<bool>,
+    start_after: Option<&str>,
+    resolve: bool,
+) -> Result<Value> {
+    let use_recent = is_recent.unwrap_or(false);
+    let page_size = 50;
+    let mut all_edges: Vec<Value> = Vec::new();
+    let mut cursor = start_after.map(|s| s.to_owned());
+    let query = if use_recent {
+        queries::LIST_RECENT_DOCS_QUERY
+    } else {
+        queries::LIST_DOCS_QUERY
+    };
+    let op_name = if use_recent { "listRecentDocs" } else { "listDocs" };
+
+    loop {
+        let mut pagination = Map::new();
+        pagination.insert("first".to_owned(), Value::from(page_size));
+        if let Some(c) = &cursor {
+            pagination.insert("after".to_owned(), Value::String(c.clone()));
+        }
+
+        let page = client
+            .graphql(
+                query,
+                Some(op_name),
+                json!({
+                    "workspaceId": workspace_id,
+                    "pagination": pagination,
+                }),
+            )
+            .await?;
+
+        let ws = page.get("data").and_then(|d| d.get("workspace")).or_else(|| page.get("workspace"));
+        let container_key = if use_recent { "recentlyUpdatedDocs" } else { "docs" };
+        let container = ws.and_then(|w| w.get(container_key));
+        let edges = container.and_then(|c| c.get("edges")).and_then(|e| e.as_array()).cloned().unwrap_or_default();
+        let _total = container.and_then(|c| c.get("totalCount")).and_then(Value::as_i64).unwrap_or(0);
+
+        if edges.is_empty() {
+            break;
+        }
+
+        let page_info = container.and_then(|c| c.get("pageInfo"));
+        let has_next = page_info.and_then(|p| p.get("hasNextPage")).and_then(Value::as_bool).unwrap_or(false);
+
+        for edge in &edges {
+            all_edges.push(edge.clone());
+        }
+
+        if !has_next {
+            break;
+        }
+        cursor = edges.last().and_then(|e| e.get("cursor")).and_then(Value::as_str).map(|s| s.to_owned());
+    }
+
+    // Build a combined response
+    let container_key = if use_recent { "recentlyUpdatedDocs" } else { "docs" };
+    let combined = json!({
+        "data": {
+            "workspace": {
+                container_key: {
+                    "edges": all_edges,
+                    "totalCount": all_edges.len() as i64,
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false,
+                    }
+                }
+            }
+        }
+    });
+
+    if resolve && !use_recent {
+        resolve_doc_list_titles(client, workspace_id, &combined).await
+    } else {
+        Ok(combined)
+    }
+}
+
 async fn resolve_doc_list_titles(
     client: &AffineClient,
     workspace_id: &str,
     list_response: &Value,
 ) -> Result<Value> {
     let mut enriched = list_response.clone();
-    let edges = enriched
-        .get_mut("workspace")
-        .and_then(|w| w.get_mut("docs"))
-        .and_then(|d| d.get_mut("edges"))
-        .and_then(|e| e.as_array_mut());
 
-    let Some(edges) = edges else {
+    let Some(edges) = find_doc_edges_mut(&mut enriched) else {
         return Ok(enriched);
     };
 
@@ -1448,6 +1588,135 @@ fn maybe_insert_bool(target: &mut Map<String, Value>, key: &str, value: Option<b
 fn print_json_pretty(value: &Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+/// Print a compact table of doc edges. Works with both `data.workspace.X.edges`
+/// and flat `workspace.X.edges` structures.
+fn print_doc_table(value: &Value) -> Result<()> {
+    // Find edges regardless of nesting
+    let edges = value
+        .get("data")
+        .and_then(|d| d.get("workspace"))
+        .or_else(|| value.get("workspace"))
+        .and_then(|w| {
+            w.get("docs")
+                .or_else(|| w.get("recentlyUpdatedDocs"))
+                .or_else(|| w.get("publicDocs"))
+                .or_else(|| w.get("searchDocs"))
+        })
+        .and_then(|d| d.get("edges"))
+        .and_then(|e| e.as_array());
+
+    let nodes: Vec<&Value> = match edges {
+        Some(edges) => edges.iter().filter_map(|e| e.get("node")).collect(),
+        None => {
+            let arr = value
+                .get("data")
+                .and_then(|d| d.get("workspace"))
+                .or_else(|| value.get("workspace"))
+                .and_then(|w| w.get("searchDocs"))
+                .and_then(|e| e.as_array());
+            match arr {
+                Some(items) => items.iter().collect(),
+                None => return Ok(()),
+            }
+        }
+    };
+
+    if nodes.is_empty() {
+        println!("(no docs)");
+        return Ok(());
+    }
+
+    // Compute column widths
+    let id_w = nodes
+        .iter()
+        .map(|n| n.get("id").and_then(Value::as_str).unwrap_or("").len())
+        .max()
+        .unwrap_or(4)
+        .max(8)
+        .min(24);
+    let title_w = nodes
+        .iter()
+        .map(|n| n.get("title").and_then(Value::as_str).map(|s| s.trim().len()).unwrap_or(0))
+        .max()
+        .unwrap_or(5)
+        .max(10)
+        .min(60);
+    let summary_w = nodes
+        .iter()
+        .map(|n| n.get("summary").and_then(Value::as_str).map(|s| s.trim().len()).unwrap_or(0))
+        .max()
+        .unwrap_or(7)
+        .max(8)
+        .min(80);
+    let updated_w = nodes
+        .iter()
+        .map(|n| n.get("updatedAt").and_then(Value::as_str).unwrap_or("").len())
+        .max()
+        .unwrap_or(7)
+        .max(10)
+        .min(20);
+
+    let sep = format!(
+        "{}{}{}{}",
+        "-".repeat(id_w + 2),
+        "+".to_string() + &"-".repeat(title_w + 2),
+        "+".to_string() + &"-".repeat(summary_w + 2),
+        "+".to_string() + &"-".repeat(updated_w + 2),
+    );
+
+    let header = format!(
+        " {} | {} | {} | {} ",
+        pad_or_trunc("ID", id_w),
+        pad_or_trunc("Title", title_w),
+        pad_or_trunc("Summary", summary_w),
+        pad_or_trunc("Updated", updated_w),
+    );
+
+    println!("{sep}");
+    println!("{header}");
+    println!("{sep}");
+
+    for node in &nodes {
+        let id = node.get("id").and_then(Value::as_str).unwrap_or("");
+        let title = node.get("title").and_then(Value::as_str).map(|s| s.trim()).unwrap_or("");
+        let summary = node.get("summary").and_then(Value::as_str).map(|s| s.trim()).unwrap_or("");
+        let updated = node.get("updatedAt").and_then(Value::as_str).unwrap_or("");
+
+        println!(
+            " {} | {} | {} | {} ",
+            pad_or_trunc(id, id_w),
+            pad_or_trunc(title, title_w),
+            pad_or_trunc(summary, summary_w),
+            pad_or_trunc(updated, updated_w),
+        );
+    }
+
+    println!("{sep}");
+    let total = value
+        .get("data")
+        .and_then(|d| d.get("workspace"))
+        .or_else(|| value.get("workspace"))
+        .and_then(|w| w.get("docs").or_else(|| w.get("recentlyUpdatedDocs")))
+        .and_then(|d| d.get("totalCount"))
+        .and_then(Value::as_i64)
+        .map(|t| format!("{} total", t))
+        .unwrap_or_else(|| format!("{} rows", nodes.len()));
+    println!(" {} ", total);
+
+    Ok(())
+}
+
+/// Right-pad or truncate a string to the given width.
+fn pad_or_trunc(s: &str, width: usize) -> String {
+    if s.len() > width {
+        let mut truncated: String = s.chars().take(width.saturating_sub(1)).collect();
+        truncated.push('…');
+        truncated
+    } else {
+        format!("{:<width$}", s, width = width)
+    }
 }
 
 fn urlencoding_encode(value: &str) -> String {

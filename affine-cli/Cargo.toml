@@ -1,6 +1,6 @@
 [package]
 name = "affine-cli"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Richard Osterloh <richard.osterloh@gmail.com>"]
 description = "CLI for the AFFiNE GraphQL API and workspace blob endpoints"
 keywords = ["affine", "graphql", "cli", "utility"]
