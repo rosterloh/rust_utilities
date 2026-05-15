@@ -155,6 +155,9 @@ fn timestamp_now() -> f64 {
 async fn load_root_doc(client: &AffineClient, workspace_id: &str) -> Result<Vec<u8>> {
     let socket = connect_to_sync(client).await?;
 
+    // Give the socket.io upgrade a beat to complete before emitting anything.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     // Join the workspace space
     let join_payload = json!({
         "spaceType": "workspace",
@@ -169,7 +172,7 @@ async fn load_root_doc(client: &AffineClient, workspace_id: &str) -> Result<Vec<
         "spaceId": workspace_id,
         "docId": workspace_id,
     });
-    let response = send_with_ack(&socket, "doc:load", load_payload, LOAD_TIMEOUT).await?;
+    let response = send_with_ack(&socket, "space:load-doc", load_payload, LOAD_TIMEOUT).await?;
 
     // Extract the doc binary from the response
     let binary = extract_doc_binary(&response)?;
@@ -193,6 +196,9 @@ async fn push_root_doc_update(
 ) -> Result<()> {
     let socket = connect_to_sync(client).await?;
 
+    // Give the socket.io upgrade a beat to complete before emitting anything.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     let join_payload = json!({
         "spaceType": "workspace",
         "spaceId": workspace_id,
@@ -210,7 +216,7 @@ async fn push_root_doc_update(
         "docId": workspace_id,
         "update": encoded,
     });
-    let _push_ack = send_with_ack(&socket, "doc:push-update", push_payload, LOAD_TIMEOUT).await?;
+    let _push_ack = send_with_ack(&socket, "space:push-doc-update", push_payload, LOAD_TIMEOUT).await?;
 
     let leave_payload = json!({
         "spaceType": "workspace",
@@ -222,10 +228,33 @@ async fn push_root_doc_update(
     Ok(())
 }
 
-/// Extract the Yjs document binary from a `doc:load` response.
+/// Extract the Yjs document binary from a `space:load-doc` response.
 fn extract_doc_binary(response: &Value) -> Result<Vec<u8>> {
-    // The AFFiNE server returns the doc data in different shapes depending on version.
-    // Try multiple formats:
+    // The AFFiNE server returns different response shapes depending on version.
+
+    // Try unwrapping from the Socket.IO ack array: [{ data: { missing, state } }]
+    if let Some(arr) = response.as_array() {
+        if let Some(first) = arr.first() {
+            if let Some(data) = first.get("data") {
+                // Use `state` field (full document snapshot).
+                if let Some(state_b64) = data.get("state").and_then(|v| v.as_str()) {
+                    let state_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, state_b64)
+                        .context("failed to decode base64 state binary")?;
+                    eprintln!("debug: state size = {} bytes", state_bytes.len());
+                    if state_bytes.len() < 1024 {
+                        eprintln!("debug: state hex = {:02x?}", &state_bytes[..state_bytes.len().min(64)]);
+                    }
+                    // The state IS a full Yjs update - just try applying it
+                    return Ok(state_bytes);
+                }
+                // Try `missing` as fallback (differential update).
+                if let Some(missing_b64) = data.get("missing").and_then(|v| v.as_str()) {
+                    return base64::Engine::decode(&base64::engine::general_purpose::STANDARD, missing_b64)
+                        .context("failed to decode base64 missing binary");
+                }
+            }
+        }
+    }
 
     // Format 1: { data: { doc: { bin: "<base64>" } } }
     if let Some(bin_str) = response
@@ -287,11 +316,19 @@ fn any_to_json_value(any: &yrs::Any) -> Value {
     }
 }
 
+/// Decode a Yjs update, trying v1 then v2.
+fn decode_yjs_update(binary: &[u8]) -> Result<Update> {
+    match Update::decode_v1(binary) {
+        Ok(u) => Ok(u),
+        Err(_) => Update::decode_v2(binary).context("failed to decode Yjs document (tried v1 and v2)")
+    }
+}
+
 /// Parse Yjs binary and extract tag options from meta.properties.tags.options.
 fn extract_tags(binary: &[u8]) -> Result<Vec<TagOption>> {
     let doc = Doc::new();
     let mut txn = doc.transact_mut();
-    txn.apply_update(Update::decode_v1(binary).context("failed to decode Yjs document")?)?;
+    txn.apply_update(decode_yjs_update(binary)?)?;
     drop(txn);
 
     let txn = doc.transact();
@@ -396,7 +433,7 @@ where
 {
     let doc = Doc::new();
     let mut txn = doc.transact_mut();
-    txn.apply_update(Update::decode_v1(binary).context("failed to decode Yjs document")?)?;
+    txn.apply_update(decode_yjs_update(binary)?)?;
     drop(txn);
 
     // Read current tags
@@ -427,7 +464,7 @@ where
 fn assign_tag_to_doc(binary: &[u8], doc_id: &str, tag_id: &str) -> Result<Vec<u8>> {
     let doc = Doc::new();
     let mut txn = doc.transact_mut();
-    txn.apply_update(Update::decode_v1(binary).context("failed to decode Yjs document")?)?;
+    txn.apply_update(decode_yjs_update(binary)?)?;
     drop(txn);
 
     let meta = doc.get_or_insert_map("meta");
@@ -472,7 +509,7 @@ fn assign_tag_to_doc(binary: &[u8], doc_id: &str, tag_id: &str) -> Result<Vec<u8
 fn unassign_tag_from_doc(binary: &[u8], doc_id: &str, tag_id: &str) -> Result<Vec<u8>> {
     let doc = Doc::new();
     let mut txn = doc.transact_mut();
-    txn.apply_update(Update::decode_v1(binary).context("failed to decode Yjs document")?)?;
+    txn.apply_update(decode_yjs_update(binary)?)?;
     drop(txn);
 
     let meta = doc.get_or_insert_map("meta");
@@ -516,7 +553,7 @@ fn delete_tag_from_workspace(binary: &[u8], tag_id: &str) -> Result<Vec<u8>> {
     // Then apply update and also remove from all docs
     let doc = Doc::new();
     let mut txn = doc.transact_mut();
-    txn.apply_update(Update::decode_v1(&update).context("failed to decode Yjs update")?)?;
+    txn.apply_update(decode_yjs_update(&update)?)?;
     drop(txn);
 
     let meta = doc.get_or_insert_map("meta");
@@ -532,7 +569,7 @@ fn delete_tag_from_workspace(binary: &[u8], tag_id: &str) -> Result<Vec<u8>> {
                 let binary_current = txn.encode_state_as_update_v1(&yrs::StateVector::default());
                 let doc_update = unassign_tag_from_doc(&binary_current, page_id.as_str(), tag_id)?;
                 let mut txn2 = doc.transact_mut();
-                txn2.apply_update(Update::decode_v1(&doc_update)?)?;
+                txn2.apply_update(decode_yjs_update(&doc_update)?)?;
                 drop(txn2);
             }
         }
