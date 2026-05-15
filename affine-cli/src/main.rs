@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod queries;
 mod sync;
+mod tags;
 
 use std::path::{Path, PathBuf};
 
@@ -45,7 +46,48 @@ enum Command {
     #[command(subcommand)]
     Blob(BlobCommand),
     #[command(subcommand)]
+    Tag(TagCommand),
+    #[command(subcommand)]
     Config(ConfigCommand),
+}
+
+/// Manage tags via the AFFiNE sync protocol (Yjs).
+#[derive(Subcommand, Debug)]
+enum TagCommand {
+    /// List all tags in the workspace.
+    List {
+        workspace_id: String,
+    },
+    /// Create a new tag.
+    Create {
+        workspace_id: String,
+        name: String,
+        #[arg(long, default_value = "#4A90D9")]
+        color: String,
+    },
+    /// Assign a tag to a document.
+    Assign {
+        workspace_id: String,
+        doc_id: String,
+        tag_id: String,
+    },
+    /// Remove a tag from a document.
+    Unassign {
+        workspace_id: String,
+        doc_id: String,
+        tag_id: String,
+    },
+    /// Delete a tag entirely (removes from all documents).
+    Delete {
+        workspace_id: String,
+        tag_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommand {
+    Show,
+    ClearSession,
 }
 
 #[derive(Subcommand, Debug)]
@@ -410,12 +452,6 @@ enum BlobUploadMode {
     Multipart,
 }
 
-#[derive(Subcommand, Debug)]
-enum ConfigCommand {
-    Show,
-    ClearSession,
-}
-
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
@@ -454,6 +490,36 @@ async fn run() -> Result<()> {
         Command::Blob(command) => {
             let client = build_client(&cli_context, &config)?;
             handle_blob(command, &client).await
+        }
+        Command::Tag(command) => {
+            let client = build_client(&cli_context, &config)?;
+            handle_tag(command, &client).await
+        }
+    }
+}
+
+/// Handle tag subcommands.
+async fn handle_tag(command: TagCommand, client: &AffineClient) -> Result<()> {
+    match command {
+        TagCommand::List { workspace_id } => {
+            let tags = tags::list_tags(client, &workspace_id).await?;
+            print_json_pretty(&json!(tags))
+        }
+        TagCommand::Create { workspace_id, name, color } => {
+            let tag = tags::create_tag(client, &workspace_id, &name, &color).await?;
+            print_json_pretty(&json!(tag))
+        }
+        TagCommand::Assign { workspace_id, doc_id, tag_id } => {
+            tags::assign_tag(client, &workspace_id, &doc_id, &tag_id).await?;
+            print_json_pretty(&json!({"status": "assigned", "doc_id": doc_id, "tag_id": tag_id}))
+        }
+        TagCommand::Unassign { workspace_id, doc_id, tag_id } => {
+            tags::unassign_tag(client, &workspace_id, &doc_id, &tag_id).await?;
+            print_json_pretty(&json!({"status": "unassigned", "doc_id": doc_id, "tag_id": tag_id}))
+        }
+        TagCommand::Delete { workspace_id, tag_id } => {
+            tags::delete_tag(client, &workspace_id, &tag_id).await?;
+            print_json_pretty(&json!({"status": "deleted", "tag_id": tag_id}))
         }
     }
 }
