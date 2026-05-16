@@ -83,6 +83,10 @@ enum TagCommand {
         workspace_id: String,
         tag_id: String,
     },
+    /// List all pages with their current tag assignments.
+    Pages {
+        workspace_id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -521,6 +525,10 @@ async fn handle_tag(command: TagCommand, client: &AffineClient) -> Result<()> {
         TagCommand::Delete { workspace_id, tag_id } => {
             tags::delete_tag(client, &workspace_id, &tag_id).await?;
             print_json_pretty(&json!({"status": "deleted", "tag_id": tag_id}))
+        }
+        TagCommand::Pages { workspace_id } => {
+            let pages = tags::list_tag_pages(client, &workspace_id).await?;
+            print_json_pretty(&json!({"pages": pages}))
         }
     }
 }

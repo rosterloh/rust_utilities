@@ -103,6 +103,15 @@ pub async fn unassign_tag(
     Ok(())
 }
 
+pub async fn list_tag_pages(
+    client: &AffineClient,
+    workspace_id: &str,
+) -> Result<serde_json::Value> {
+    let b64 = load_root_doc(client, workspace_id).await?;
+    let scripts = scripts_dir()?;
+    yjs_engine::list_page_tags_op(&scripts, &b64)
+}
+
 pub async fn delete_tag(
     client: &AffineClient,
     workspace_id: &str,

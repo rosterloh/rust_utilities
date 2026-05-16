@@ -147,16 +147,22 @@ return {{ tag: {{ id: tagId, value: '{name}', color: '{color}', create_date: now
 pub fn assign_tag_op(scripts_dir: &PathBuf, b64: &str, doc_id: &str, tag_id: &str) -> Result<String> {
     let op = format!(r#"
 const meta = doc.getMap('meta');
-let pages = meta.get('pages');
-if (!(pages instanceof Y.Map)) {{ pages = new Y.Map(); meta.set('pages', pages); }}
-let docEntry = pages.get('{doc_id}');
-if (!(docEntry instanceof Y.Map)) {{ docEntry = new Y.Map(); pages.set('{doc_id}', docEntry); }}
+const pages = meta.get('pages');
+// pages is a Y.Array of Maps with id, title, tags, etc.
+let docEntry = null;
+if (pages instanceof Y.Array) {{
+  pages.forEach(entry => {{
+    if (entry instanceof Y.Map && entry.get('id') === '{doc_id}') {{
+      docEntry = entry;
+    }}
+  }});
+}}
+if (!docEntry) {{ return ''; }}
 let tags = docEntry.get('tags');
 if (!(tags instanceof Y.Array)) {{ tags = new Y.Array(); docEntry.set('tags', tags); }}
 let found = false;
 tags.forEach(t => {{ if (t === '{tag_id}') found = true; }});
 if (!found) tags.push(['{tag_id}']);
-
 const update = Y.encodeStateAsUpdate(doc);
 return Buffer.from(update.buffer, update.byteOffset, update.byteLength).toString('base64');
 "#);
@@ -169,9 +175,15 @@ pub fn unassign_tag_op(scripts_dir: &PathBuf, b64: &str, doc_id: &str, tag_id: &
     let op = format!(r#"
 const meta = doc.getMap('meta');
 const pages = meta.get('pages');
-if (!(pages instanceof Y.Map)) return '';
-const docEntry = pages.get('{doc_id}');
-if (!(docEntry instanceof Y.Map)) return '';
+let docEntry = null;
+if (pages instanceof Y.Array) {{
+  pages.forEach(entry => {{
+    if (entry instanceof Y.Map && entry.get('id') === '{doc_id}') {{
+      docEntry = entry;
+    }}
+  }});
+}}
+if (!docEntry) {{ return ''; }}
 const tags = docEntry.get('tags');
 if (!(tags instanceof Y.Array)) return '';
 for (let i = 0; i < tags.length; i++) {{
@@ -185,6 +197,32 @@ return Buffer.from(update.buffer, update.byteOffset, update.byteLength).toString
 "#);
     let val = run_tag_op(scripts_dir, b64, &op)?;
     val.as_str().map(String::from).ok_or_else(|| anyhow!("unassign_tag_op: expected string result"))
+}
+
+/// List all pages with their tag IDs from the Yjs doc.
+pub fn list_page_tags_op(scripts_dir: &PathBuf, b64: &str) -> Result<serde_json::Value> {
+    let op = r#"
+const meta = doc.getMap('meta');
+const pages = meta.get('pages');
+if (!(pages instanceof Y.Array)) return [];
+const result = [];
+pages.forEach(entry => {
+  if (entry instanceof Y.Map) {
+    const tagIds = [];
+    const tags = entry.get('tags');
+    if (tags instanceof Y.Array) {
+      tags.forEach(t => tagIds.push(t));
+    }
+    result.push({
+      id: entry.get('id') || '',
+      title: entry.get('title') || '',
+      tags: tagIds,
+    });
+  }
+});
+return result;
+"#;
+    run_tag_op(scripts_dir, b64, op)
 }
 
 /// Delete a tag from the workspace. Returns the new doc state as base64.
@@ -210,7 +248,7 @@ if (properties instanceof Y.Map) {{
 }}
 // Remove from all pages
 const pages = meta.get('pages');
-if (pages instanceof Y.Map) {{
+if (pages instanceof Y.Array) {{
   pages.forEach(page => {{
     if (page instanceof Y.Map) {{
       const pageTags = page.get('tags');
