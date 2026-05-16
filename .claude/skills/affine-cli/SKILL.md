@@ -313,7 +313,7 @@ Introspect `SearchInput`, `SearchQuery`, `SearchOptions`, `SearchTable` first to
 
 ## When the user asks for something this CLI can't do
 
-- **Tag management** → only via the web UI (YJS-only state).
+- **Tag management** → `tag list`, `tag create`, `tag add`, `tag remove`, `tag list-docs` subcommands via embedded Yjs runtime.
 - **Creating a brand-new doc** → not implemented; the user must create in the UI, then the CLI can manage it.
 - **Editing doc content / applying YJS updates by hand** → possible via `applyDocUpdates` but requires a YJS encoder (the CLI doesn't ship one). Point the user at the web app or the raw sync protocol if they really want this.
 - **Comments / replies / notifications / Copilot sessions** → available in GraphQL but not wrapped yet; use the `graphql` subcommand with the appropriate mutation name.

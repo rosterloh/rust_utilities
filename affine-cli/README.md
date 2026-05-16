@@ -63,10 +63,13 @@ affine-cli workspace delete <id>
 # Browsing
 affine-cli doc list <workspace-id> --first 20
 affine-cli doc list <workspace-id> --resolve                 # populate title/summary per doc
+affine-cli doc list <workspace-id> --resolve --table         # compact table output
+affine-cli doc list <workspace-id> --all --table --resolve   # auto-paginate all docs as table
 affine-cli doc recent <workspace-id> --first 10              # recentlyUpdatedDocs
+affine-cli doc recent <workspace-id> --all --table           # all recent docs as table
 affine-cli doc public-list <workspace-id>                    # docs published to the web
 affine-cli doc get <workspace-id> <doc-id>
-affine-cli doc search <workspace-id> "keyword" --limit 20    # see below for advanced search
+affine-cli doc search <workspace-id> "keyword" --limit 20    # keyword search
 
 # Analytics
 affine-cli doc analytics <workspace-id> <doc-id> --window-days 30 --timezone Europe/London
@@ -102,6 +105,12 @@ match / boost / exists queries) is reachable through the raw `graphql` subcomman
 affine-cli graphql --query-file my_search.graphql \
   --variables '{"id":"<ws>","input":{"table":"doc","query":{...},"options":{...}}}'
 ```
+
+### New in v0.3.0
+
+- **`--table`** flag: clean table output (`ID | Title | Summary | Updated`) instead of raw JSON.
+- **`--all`** flag: auto-paginate through all pages. Combine with `--table --resolve`.
+- **`--resolve` bug fix**: now correctly finds the edges array in the GraphQL `data` envelope.
 
 ## Blobs
 
